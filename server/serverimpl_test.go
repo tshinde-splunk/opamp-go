@@ -447,6 +447,50 @@ func TestServerAttachAcceptConnection(t *testing.T) {
 	eventually(t, func() bool { return atomic.LoadInt32(&connectionCloseCalled) == 1 })
 }
 
+func TestServerAttachSendMessagePlainHTTP(t *testing.T) {
+	connectedCalled := int32(0)
+	connectionCloseCalled := int32(0)
+	var srvConn types.Connection
+	callbacks := CallbacksStruct{
+		OnConnectingFunc: func(request *http.Request) types.ConnectionResponse {
+			return types.ConnectionResponse{Accept: true}
+		},
+		OnConnectedFunc: func(conn types.Connection) {
+			atomic.StoreInt32(&connectedCalled, 1)
+			srvConn = conn
+		},
+		OnConnectionCloseFunc: func(conn types.Connection) {
+			atomic.StoreInt32(&connectionCloseCalled, 1)
+			assert.EqualValues(t, srvConn, conn)
+		},
+	}
+
+	// Prepare to attach OpAMP Server to an HTTP Server created separately.
+	settings := Settings{Callbacks: callbacks}
+	srv := New(&sharedinternal.NopLogger{})
+	require.NotNil(t, srv)
+	handlerFunc, err := srv.Attach(settings)
+	require.NoError(t, err)
+
+	// Create an HTTP Server and make it handle OpAMP connections.
+	mux := http.NewServeMux()
+	path := "/opamppath"
+	mux.HandleFunc(path, handlerFunc)
+	hs := httptest.NewServer(mux)
+	defer hs.Close()
+
+	//verify message can be sent
+	//Send a message to the Server.
+	sendMsg := protobufs.AgentToServer{
+		InstanceUid: "12345678",
+	}
+	b, err := proto.Marshal(&sendMsg)
+	require.NoError(t, err)
+	resp, err := http.Post("http://"+hs.Listener.Addr().String()+path, contentTypeProtobuf, bytes.NewReader(b))
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+}
+
 func TestServerHonoursClientRequestContentEncoding(t *testing.T) {
 
 	hc := http.Client{}
